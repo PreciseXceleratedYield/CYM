@@ -20,6 +20,18 @@ bash start.sh
 
 Open **http://127.0.0.1:8000** in Safari. Upload a short black-and-white test clip first. Processing happens locally in the background; keep the Mac awake, plugged in, and the server running. Closing Safari is fine, but closing the laptop lid normally sleeps the machine.
 
+## Local enhancement modes
+
+CYM now offers three modes in the web UI: **COLOR**, **ENHANCE**, and **COLOR + ENHANCE**.
+ENHANCE preserves existing colors and applies offline FFmpeg denoising, Lanczos upscaling
+(up to 720p/1080p/4K), and configurable sharpening. The default is balanced, up to 1080p.
+Upscaling never intentionally reduces source resolution. Original frame rate is retained.
+
+**Important:** This first enhancement implementation uses traditional FFmpeg filters,
+**not neural AI upscaling**. It can improve perceived quality but cannot reconstruct
+missing detail or perform AI face restoration, scratch inpainting, or optical-flow
+frame interpolation. Those require separately integrated and tested local models.
+
 ## Features
 - Upload MP4/MKV/MOV/AVI
 - Automatic shot-by-shot colorization using the Zhang/OpenCV Caffe model
