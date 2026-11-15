@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
 MODELS = ROOT / "models"
 DATA.mkdir(exist_ok=True)
-ALLOWED = {".mp4", ".mkv", ".mov", ".avi"}
+ALLOWED = {".mp4", ".mkv", ".mov", ".avi", ".mpg", ".mpeg"}
 CHUNK_SECONDS = 60
 LOCK = threading.Lock()
 app = FastAPI(title="CYM — Color Your Movie")
@@ -234,7 +234,7 @@ async def upload(file: UploadFile = File(...), mode: str = 'color', height: int 
         raise HTTPException(400, 'Invalid processing options')
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED:
-        raise HTTPException(400, "Supported formats: MP4, MKV, MOV, AVI")
+        raise HTTPException(400, "Supported formats: MP4, MKV, MOV, AVI, MPG, MPEG")
     job = uuid.uuid4().hex
     folder = DATA / job
     folder.mkdir()
@@ -310,7 +310,7 @@ small{color:#637087;display:block;margin-top:15px;word-break:break-word}
 <label>Mode <select id="mode"><option value="color">COLOR</option><option value="enhance">ENHANCE</option><option value="both">COLOR + ENHANCE</option></select></label>
 <label>Resolution <select id="height"><option value="0">Original</option><option value="720">720p</option><option value="1080" selected>1080p</option><option value="2160">4K</option></select></label>
 <label>Strength <select id="strength"><option value="gentle">Gentle</option><option value="balanced" selected>Balanced</option><option value="strong">Strong</option></select></label>
-<input type="file" id="movie" accept=".mp4,.mkv,.mov,.avi" required>
+<input type="file" id="movie" accept=".mp4,.mkv,.mov,.avi,.mpg,.mpeg" required>
 <button id="go">Transform movie</button></form>
 <div id="panel"><h2 id="status">Preparing…</h2><progress id="progress" value="0" max="100"></progress>
 <p id="detail"></p><button id="resume" style="display:none">Resume processing</button>
