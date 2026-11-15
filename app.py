@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import threading
 import time
+import logging
 import uuid
 from pathlib import Path
 
@@ -23,6 +24,8 @@ CHUNK_SECONDS = 60
 LOCK = threading.Lock()
 app = FastAPI(title="CYM — Color Your Movie")
 worker = None
+PROCESS_LOCK = threading.Lock()
+LOG = logging.getLogger("cym")
 
 
 def command(args):
@@ -112,15 +115,19 @@ def colorize_video(src, dest, model):
     if not out.isOpened():
         cap.release()
         raise RuntimeError("Could not open video writer")
+    count = 0
     try:
         while True:
             ok, frame = cap.read()
             if not ok:
                 break
             out.write(model.frame(frame))
+            count += 1
     finally:
         cap.release()
         out.release()
+    if count == 0:
+        raise RuntimeError("No frames decoded from input video")
 
 
 def process(job):
@@ -174,15 +181,22 @@ def process(job):
         final_tmp.replace(folder / "output.mp4")
         write_state(job, status="complete", progress=100)
     except Exception as exc:
+        LOG.exception("CYM processing failed for %s", job)
         write_state(job, status="failed", error=str(exc)[:2000])
+    finally:
+        PROCESS_LOCK.release()
 
 
 def start_job(job):
     global worker
-    if worker is not None and worker.is_alive():
+    if not PROCESS_LOCK.acquire(blocking=False):
         raise HTTPException(409, "Another movie is already processing")
-    worker = threading.Thread(target=process, args=(job,), daemon=True)
-    worker.start()
+    try:
+        worker = threading.Thread(target=process, args=(job,), daemon=True)
+        worker.start()
+    except Exception:
+        PROCESS_LOCK.release()
+        raise
 
 
 @app.on_event("startup")
@@ -220,7 +234,12 @@ async def upload(file: UploadFile = File(...)):
             "id": job, "input": target.name, "status": "queued", "progress": 0,
             "completed_parts": 0, "total_parts": 0, "error": None
         }))
-        start_job(job)
+        try:
+            start_job(job)
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                raise
+            # Preserve the upload and allow processing when the active job ends.
         return {"id": job}
     except Exception:
         shutil.rmtree(folder, ignore_errors=True)
@@ -238,6 +257,8 @@ def status(job: str):
 
 @app.post("/api/jobs/{job}/resume")
 def resume(job: str):
+    if not job.isalnum() or len(job) != 32:
+        raise HTTPException(404)
     state = read_state(job)
     if state["status"] == "complete":
         return state
@@ -247,6 +268,8 @@ def resume(job: str):
 
 @app.get("/api/jobs/{job}/download")
 def download(job: str):
+    if not job.isalnum() or len(job) != 32:
+        raise HTTPException(404)
     state = read_state(job)
     path = DATA / job / "output.mp4"
     if state["status"] != "complete" or not path.is_file():
