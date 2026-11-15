@@ -2,8 +2,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p models
-curl -fL --retry 3 "https://raw.githubusercontent.com/opencv/opencv/master/samples/dnn/colorization_deploy_v2.prototxt" -o models/colorization_deploy_v2.prototxt
-curl -fL --retry 3 "https://raw.githubusercontent.com/opencv/opencv/master/samples/dnn/pts_in_hull.npy" -o models/pts_in_hull.npy
-curl -fL --retry 3 "https://github.com/richzhang/colorization/releases/download/v1.0/colorization_release_v2.caffemodel" -o models/colorization_release_v2.caffemodel
-test "$(stat -f%z models/colorization_release_v2.caffemodel)" -gt 1000000 || { echo "Model download incomplete"; exit 1; }
-echo "Colorization model ready."
+BASE="https://storage.openvinotoolkit.org/repositories/datumaro/models/colorization"
+for name in colorization_deploy_v2.prototxt pts_in_hull.npy colorization_release_v2.caffemodel; do
+  if [ ! -s "models/$name" ]; then
+    echo "Downloading $name..."
+    curl --fail --location --retry 3 --connect-timeout 30 "$BASE/$name" -o "models/$name.part"
+    mv "models/$name.part" "models/$name"
+  fi
+done
+test "$(stat -f%z models/colorization_release_v2.caffemodel)" -gt 100000000 || { echo "Invalid model weights. Remove models/colorization_release_v2.caffemodel and retry."; exit 1; }
+test "$(stat -f%z models/colorization_deploy_v2.prototxt)" -gt 1000 || { echo "Invalid prototxt"; exit 1; }
+test "$(stat -f%z models/pts_in_hull.npy)" -gt 1000 || { echo "Invalid color centers"; exit 1; }
+echo "Model files downloaded."
