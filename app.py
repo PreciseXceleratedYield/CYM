@@ -10,6 +10,7 @@ import logging
 import uuid
 from pathlib import Path
 
+from enhance import enhance_video
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -138,7 +139,8 @@ def process(job):
         duration, has_audio = probe(src)
         parts = math.ceil(duration / CHUNK_SECONDS)
         write_state(job, status="running", total_parts=parts, error=None)
-        model = Colorizer()
+        mode = st.get('mode', 'color')
+        model = Colorizer() if mode != 'enhance' else None
         for i in range(parts):
             result = folder / f"part_{i:05d}.mp4"
             if result.is_file() and result.stat().st_size > 0:
@@ -153,7 +155,17 @@ def process(job):
                 command(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                          "-ss", str(start), "-i", str(src), "-t", str(length),
                          "-map", "0:v:0", "-an", "-c:v", "mpeg4", "-q:v", "3", str(raw)])
-                colorize_video(raw, colored, model)
+                if mode == 'enhance':
+                    enhance_video(raw, colored, st.get('height', 1080), st.get('strength', 'balanced'))
+                elif mode == 'both':
+                    first = folder / f"first_{i:05d}.mp4"
+                    try:
+                        colorize_video(raw, first, model)
+                        enhance_video(first, colored, st.get('height', 1080), st.get('strength', 'balanced'))
+                    finally:
+                        first.unlink(missing_ok=True)
+                else:
+                    colorize_video(raw, colored, model)
                 args = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                         "-i", str(colored)]
                 if has_audio:
@@ -217,7 +229,9 @@ def home():
 
 
 @app.post("/api/jobs")
-async def upload(file: UploadFile = File(...)):
+async def upload(file: UploadFile = File(...), mode: str = 'color', height: int = 1080, strength: str = 'balanced'):
+    if mode not in ('color', 'enhance', 'both') or height not in (0, 720, 1080, 2160) or strength not in ('gentle', 'balanced', 'strong'):
+        raise HTTPException(400, 'Invalid processing options')
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED:
         raise HTTPException(400, "Supported formats: MP4, MKV, MOV, AVI")
@@ -232,7 +246,8 @@ async def upload(file: UploadFile = File(...)):
         probe(target)
         (folder / "state.json").write_text(json.dumps({
             "id": job, "input": target.name, "status": "queued", "progress": 0,
-            "completed_parts": 0, "total_parts": 0, "error": None
+            "completed_parts": 0, "total_parts": 0, "error": None,
+            "mode": mode, "height": height, "strength": strength
         }))
         try:
             start_job(job)
@@ -274,7 +289,7 @@ def download(job: str):
     path = DATA / job / "output.mp4"
     if state["status"] != "complete" or not path.is_file():
         raise HTTPException(409, "Movie is not ready")
-    return FileResponse(path, media_type="video/mp4", filename="CYM_color_movie.mp4")
+    return FileResponse(path, media_type="video/mp4", filename="CYM_" + state.get("mode", "color") + "_movie.mp4")
 
 
 HTML = """<!doctype html>
@@ -291,7 +306,11 @@ small{color:#637087;display:block;margin-top:15px;word-break:break-word}
 </style></head><body><main>
 <h1>🎞️ CYM — Color Your Movie</h1>
 <p>Turn black-and-white footage into color and clean up its original soundtrack. All processing stays on your Mac.</p>
-<form id="form"><input type="file" id="movie" accept=".mp4,.mkv,.mov,.avi" required>
+<form id="form">
+<label>Mode <select id="mode"><option value="color">COLOR</option><option value="enhance">ENHANCE</option><option value="both">COLOR + ENHANCE</option></select></label>
+<label>Resolution <select id="height"><option value="0">Original</option><option value="720">720p</option><option value="1080" selected>1080p</option><option value="2160">4K</option></select></label>
+<label>Strength <select id="strength"><option value="gentle">Gentle</option><option value="balanced" selected>Balanced</option><option value="strong">Strong</option></select></label>
+<input type="file" id="movie" accept=".mp4,.mkv,.mov,.avi" required>
 <button id="go">Transform movie</button></form>
 <div id="panel"><h2 id="status">Preparing…</h2><progress id="progress" value="0" max="100"></progress>
 <p id="detail"></p><button id="resume" style="display:none">Resume processing</button>
@@ -316,7 +335,7 @@ async function check(){
 }
 $('form').onsubmit=async e=>{
  e.preventDefault();$('go').disabled=true;$('panel').style.display='block';$('status').textContent='Uploading…';
- const fd=new FormData();fd.append('file',$('movie').files[0]);
+ const fd=new FormData();fd.append('file',$('movie').files[0]);fd.append('mode',$('mode').value);fd.append('height',$('height').value);fd.append('strength',$('strength').value);
  try{const r=await fetch('/api/jobs',{method:'POST',body:fd});const j=await r.json();if(!r.ok)throw Error(j.detail||'Upload failed');
  active=j.id;localStorage.setItem('cym_job',active);await check()
  }catch(err){$('status').textContent='ERROR';$('detail').textContent=err.message;$('go').disabled=false}
